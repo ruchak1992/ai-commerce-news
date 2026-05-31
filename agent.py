@@ -31,30 +31,37 @@ Keep it punchy. Use emojis for readability. Format for Telegram (no markdown hea
             messages=messages
         )
 
+        # Claude is done — extract and return final text
         if response.stop_reason == "end_turn":
-            # Extract final text
+            for block in response.content:
+                if hasattr(block, "text"):
+                    return block.text
+
+        # Claude wants to search — append full response and loop
+        messages.append({"role": "assistant", "content": response.content})
+
+        # Collect tool_use block IDs and pass empty results back
+        # (web_search is server-side — results are already in response.content)
+        tool_results = []
+        for block in response.content:
+            if block.type == "tool_use":
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": ""
+                })
+
+        if tool_results:
+            messages.append({"role": "user", "content": tool_results})
+        else:
+            # No tool use and not end_turn — extract whatever text we have
             for block in response.content:
                 if hasattr(block, "text"):
                     return block.text
             break
 
-        # Handle tool use — append and continue loop
-        messages.append({"role": "assistant", "content": response.content})
-        tool_results = []
-        for block in response.content:
-            if block.type == "tool_use":
-                # Web search results come back automatically in the next response
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "content": "Search executed."
-                })
-        if tool_results:
-            messages.append({"role": "user", "content": tool_results})
-
 def send_telegram(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    # Telegram has a 4096 char limit per message — split if needed
     chunks = [text[i:i+4000] for i in range(0, len(text), 4000)]
     for chunk in chunks:
         requests.post(url, json={
@@ -66,5 +73,6 @@ def send_telegram(text):
 if __name__ == "__main__":
     print("Running digest...")
     digest = run_digest()
+    print(digest)  # also print to logs so we can debug
     send_telegram(digest)
     print("Sent!")
