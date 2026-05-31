@@ -9,70 +9,62 @@ ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
 
 def run_digest():
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    today = date.today().strftime("%B %d, %Y")
+    today = date.today().strftime("%b %d, %Y")
 
-    messages = [{"role": "user", "content": f"Give me today's ({today}) AI in commerce briefing."}]
+    messages = [{"role": "user", "content": f"Today's AI commerce briefing ({today})."}]
     tools = [{"type": "web_search_20250305", "name": "web_search"}]
 
-    # Agentic loop
-    while True:
+    max_iterations = 4
+    for _ in range(max_iterations):
         response = client.messages.create(
-            model="claude-sonnet-4-5",
-            max_tokens=4096,
+            model="claude-haiku-4-5",
+            max_tokens=1500,
             tools=tools,
-            system="""You are a commerce & retail tech analyst. 
-Search for the latest AI in commerce, retail, and ecommerce news from the past 24 hours.
-Do 4-5 searches covering different angles: funding rounds, product launches, retailer adoption, startups, big tech moves.
-Then write a concise morning briefing with:
-- 🔑 3-5 headline stories (2-3 sentences each)
-- 💡 Why it matters for each
-- 📌 One overall 'so what' takeaway at the end
-Keep it punchy. Use emojis for readability. Format for Telegram (no markdown headers, just bold with *).""",
+            system="""Daily AI commerce briefing. Do 2-3 web searches for recent AI + retail/ecommerce news. Then output ONLY the briefing — no preamble.
+
+Format (plain text, no markdown):
+🤖 AI IN COMMERCE BRIEFING
+
+1. [Headline]
+What: 1 sentence. Why: 1 sentence.
+
+(3 stories total)
+
+📌 Takeaway: 1 sentence.""",
             messages=messages
         )
 
-        # Claude is done — extract and return final text
         if response.stop_reason == "end_turn":
-            for block in response.content:
-                if hasattr(block, "text"):
-                    return block.text
-
-        # Claude wants to search — append full response and loop
-        messages.append({"role": "assistant", "content": response.content})
-
-        # Collect tool_use block IDs and pass empty results back
-        # (web_search is server-side — results are already in response.content)
-        tool_results = []
-        for block in response.content:
-            if block.type == "tool_use":
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "content": ""
-                })
-
-        if tool_results:
-            messages.append({"role": "user", "content": tool_results})
-        else:
-            # No tool use and not end_turn — extract whatever text we have
             for block in response.content:
                 if hasattr(block, "text"):
                     return block.text
             break
 
+        messages.append({"role": "assistant", "content": response.content})
+        tool_results = [
+            {"type": "tool_result", "tool_use_id": b.id, "content": ""}
+            for b in response.content if b.type == "tool_use"
+        ]
+        if not tool_results:
+            break
+        messages.append({"role": "user", "content": tool_results})
+
+    # Fallback: return whatever text we have
+    for block in response.content:
+        if hasattr(block, "text"):
+            return block.text
+    return "Digest generation failed."
+
 def send_telegram(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     chunks = [text[i:i+4000] for i in range(0, len(text), 4000)]
-    for chunk in chunks:
-        requests.post(url, json={
-            "chat_id": TELEGRAM_CHAT_ID,
-            "text": chunk,
-            "parse_mode": "Markdown"
-        })
+    for i, chunk in enumerate(chunks):
+        r = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": chunk})
+        print(f"Chunk {i+1}/{len(chunks)} — {r.status_code}: {r.text[:150]}")
 
 if __name__ == "__main__":
     print("Running digest...")
     digest = run_digest()
-    print(digest)  # also print to logs so we can debug
+    print(f"Length: {len(digest)} chars\n{'='*50}\n{digest}\n{'='*50}")
     send_telegram(digest)
-    print("Sent!")
+    print("Done!")
