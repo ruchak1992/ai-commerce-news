@@ -13,14 +13,17 @@ def run_digest():
 
     messages = [{"role": "user", "content": f"Today's AI commerce briefing ({today})."}]
     tools = [{"type": "web_search_20250305", "name": "web_search"}]
+    all_text = []  # collect text across ALL iterations
 
-    max_iterations = 4
-    for _ in range(max_iterations):
+    max_iterations = 8
+    for i in range(max_iterations):
         response = client.messages.create(
             model="claude-haiku-4-5",
-            max_tokens=1500,
+            max_tokens=2500,
             tools=tools,
-            system="""Daily AI commerce briefing. Do 2-3 web searches for recent AI + retail/ecommerce news. Then output ONLY the briefing — no preamble.
+            system="""Daily AI commerce briefing. Do 2-3 web searches for recent AI + retail/ecommerce news, then write the briefing in ONE response (don't split it across turns).
+
+Output ONLY the briefing — no preamble.
 
 Format (plain text, no markdown):
 🤖 AI IN COMMERCE BRIEFING
@@ -34,10 +37,14 @@ What: 1 sentence. Why: 1 sentence.
             messages=messages
         )
 
+        # Collect any text in this response
+        for block in response.content:
+            if hasattr(block, "text") and block.text.strip():
+                all_text.append(block.text)
+
+        print(f"Iter {i+1}: stop={response.stop_reason}, text_blocks={sum(1 for b in response.content if hasattr(b,'text'))}, tool_uses={sum(1 for b in response.content if b.type=='tool_use')}")
+
         if response.stop_reason == "end_turn":
-            for block in response.content:
-                if hasattr(block, "text"):
-                    return block.text
             break
 
         messages.append({"role": "assistant", "content": response.content})
@@ -49,11 +56,7 @@ What: 1 sentence. Why: 1 sentence.
             break
         messages.append({"role": "user", "content": tool_results})
 
-    # Fallback: return whatever text we have
-    for block in response.content:
-        if hasattr(block, "text"):
-            return block.text
-    return "Digest generation failed."
+    return "\n".join(all_text) if all_text else "Digest generation failed."
 
 def send_telegram(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
